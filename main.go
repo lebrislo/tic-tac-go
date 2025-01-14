@@ -2,17 +2,19 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"time"
 )
 
 var playerNumber int
 var playerIsServer bool
 
-var myTurn bool
-var board [3][3]int
+var game Game
+var connection net.Conn
 
 func main() {
 	
@@ -27,15 +29,13 @@ func main() {
 
 	playerIsServer = playerNumber == 1
 
-	board = [3][3]int{ {0, 0, 0}, {0, 0, 0}, {0, 0, 0} }
+	game = *NewGame()
 
 	if playerIsServer {
 		fmt.Println("You choose player 1")
-		myTurn = true
 		startServerPlayer()
 	} else {
 		fmt.Println("You choose player 2")
-		myTurn = false
 		startClientPlayer()
 	}
 }
@@ -58,8 +58,10 @@ func startServerPlayer() {
 		return
 	}
 
+	connection = conn
+
 	fmt.Println("Player 2 connected !")
-	handleBidirectionalCommunication(conn)
+	startGame()
 }
 
 func startClientPlayer() {
@@ -70,22 +72,23 @@ func startClientPlayer() {
 	for {
 		conn, err = net.Dial("tcp", "0.0.0.0:8080")
 		if err == nil {
-			fmt.Println("Connected to Player 1 !")
 			break
 		}
 		time.Sleep(1 * time.Second)
 		fmt.Println("Retrying connection...")
 	}
 
-	handleBidirectionalCommunication(conn)
+	connection = conn
+	fmt.Println("Connected to Player 1 !")
+	startGame()
 }
 
-func handleBidirectionalCommunication(conn net.Conn) {
-	defer conn.Close()
+func startGame() {
+	defer connection.Close()
 
 	// Lancement d'une goroutine pour lire les messages reçus
 	go func() {
-		reader := bufio.NewReader(conn)
+		reader := bufio.NewReader(connection)
 		for {
 			message, err := reader.ReadString('\n')
 			if err != nil {
@@ -93,42 +96,49 @@ func handleBidirectionalCommunication(conn net.Conn) {
 				return
 			}
 			fmt.Printf("Message received: %s", message)
-			printBoard()
 		}
 	}()
 
-	// Boucle principale pour envoyer des messages
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("Type a message to send (type 'quit' to exit):")
-	for scanner.Scan() {
-		message := scanner.Text()
-		if message == "quit" {
-			fmt.Println("Closing connection...")
-			return
-		}
-		_, err := conn.Write([]byte(message + "\n"))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error sending message: %s\n", err.Error())
-			return
-		}
+	if playerIsServer {
+		askPlayerMove()
+	}
+
+	for game.CheckWin() == 0{
+
 	}
 }
 
-func printBoard() {
-	fmt.Println("Board:")
-	fmt.Printf("\n-------------\n")
-	for i := 0; i < 3; i++ {
-		fmt.Printf("|")
-		for j := 0; j < 3; j++ {
-			if board[i][j] == 1 {
-				fmt.Printf(" X ")
-			} else if board[i][j] == 2 {
-				fmt.Printf(" O ")
-			} else {
-				fmt.Printf("   ")
-			}
-			fmt.Printf("|")
+func askPlayerMove() {
+	var cell int
+
+	scanner := bufio.NewScanner(os.Stdin)
+	
+	for {
+		fmt.Printf("\nType board cell next play [1-9]: ")
+		scanner.Scan()
+		input := scanner.Text()
+
+		var err error
+		cell, err = strconv.Atoi(input)
+
+		if err != nil {
+			fmt.Println("Invalid input. Please enter a number between 1 and 9.")
+			continue
 		}
-		fmt.Printf("\n-------------\n")
+
+		if cell >= 1 && cell <= 9 {
+			break
+		} else {
+			fmt.Println("Invalid cell number. Please enter a number between 1 and 9.")
+		}
+	}
+
+	game.Play(cell)
+
+	gameJson, _ := json.Marshal(&game)
+	message := string(gameJson) + "\n"
+	_, err := connection.Write([]byte(message))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error sending message: %s\n", err.Error())
 	}
 }
